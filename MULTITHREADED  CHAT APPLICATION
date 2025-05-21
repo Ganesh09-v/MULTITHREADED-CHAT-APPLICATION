@@ -1,0 +1,127 @@
+import java.io.*;
+import java.net.*;
+import java.util.*;
+import java.util.concurrent.*;
+
+
+public class Server {
+    
+    private static Set<ClientHandler> clientHandlers = Collections.synchronizedSet(new HashSet<>());
+    
+    private static ExecutorService pool = Executors.newFixedThreadPool(10); 
+
+    public static void main(String[] args) {
+        final int PORT = 12345; 
+        ServerSocket serverSocket = null;
+
+        try {
+            serverSocket = new ServerSocket(PORT);
+            System.out.println("Chat Server started on port " + PORT);
+            System.out.println("Waiting for clients to connect...");
+
+           
+            while (true) {
+                Socket clientSocket = serverSocket.accept(); 
+                System.out.println("New client connected: " + clientSocket);
+
+                
+                ClientHandler clientHandler = new ClientHandler(clientSocket);
+                clientHandlers.add(clientHandler); 
+                pool.execute(clientHandler); 
+            }
+        } catch (IOException e) {
+            System.err.println("Server error: " + e.getMessage());
+        } finally {
+           
+            if (serverSocket != null) {
+                try {
+                    serverSocket.close();
+                    System.out.println("Server socket closed.");
+                } catch (IOException e) {
+                    System.err.println("Error closing server socket: " + e.getMessage());
+                }
+            }
+            pool.shutdown(); 
+        }
+    }
+
+    
+    public static void broadcastMessage(String message, ClientHandler senderHandler) {
+        synchronized (clientHandlers) { 
+            for (ClientHandler handler : clientHandlers) {
+                
+                if (handler != senderHandler) {
+                    handler.sendMessage(message);
+                }
+            }
+        }
+    }
+
+    
+    public static void removeClient(ClientHandler clientHandler) {
+        clientHandlers.remove(clientHandler);
+        System.out.println("Client disconnected: " + clientHandler.getClientSocket());
+    }
+
+    
+    private static class ClientHandler implements Runnable {
+        private Socket clientSocket;
+        private PrintWriter out;
+        private BufferedReader in;
+        private String clientName;
+
+        public ClientHandler(Socket socket) {
+            this.clientSocket = socket;
+        }
+
+        public Socket getClientSocket() {
+            return clientSocket;
+        }
+
+        
+        public void run() {
+            try {
+                
+                in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+                out = new PrintWriter(clientSocket.getOutputStream(), true); 
+
+                
+                out.println("Welcome to the chat! Please enter your name:");
+                clientName = in.readLine();
+                if (clientName == null || clientName.trim().isEmpty()) {
+                    clientName = "AnonymousUser" + clientSocket.getPort(); 
+                }
+                System.out.println(clientName + " has joined the chat.");
+                broadcastMessage(clientName + " has joined the chat.", this);
+
+                String message;
+                
+                while ((message = in.readLine()) != null) {
+                    System.out.println(clientName + ": " + message);
+                    
+                    broadcastMessage(clientName + ": " + message, this);
+                }
+            } catch (IOException e) {
+                
+                System.err.println("Error handling client " + clientName + ": " + e.getMessage());
+            } finally {
+                
+                try {
+                    if (in != null) in.close();
+                    if (out != null) out.close();
+                    if (clientSocket != null) clientSocket.close();
+                } catch (IOException e) {
+                    System.err.println("Error closing client resources: " + e.getMessage());
+                }
+                
+                removeClient(this);
+                broadcastMessage(clientName + " has left the chat.", this);
+            }
+        }
+
+       
+        public void sendMessage(String message) {
+            out.println(message);
+        }
+    }
+}
